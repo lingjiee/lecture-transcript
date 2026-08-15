@@ -65,12 +65,26 @@ python -m venv .venv
 ├── 输出/       ← .srt 和 .md
 ├── 已处理/     ← 自动归档
 ├── models/     ← 模型缓存，首次运行自动下载
-├── glossary.md ← 从 glossary.example.md 复制过来
-└── 转写.bat    ← 从 transcribe/ 复制过来，改开头两行
+└── glossary.md ← 从 glossary.example.md 复制过来
 ```
 
-把 `transcribe/转写.bat` 复制进数据目录，编辑开头两行：`REPO` 指向仓库，
-`MODEL` 选档位。之后双击即可。
+三个子目录不用手建，跑一次会自动创建。
+
+最后告诉脚本数据在哪——复制 `transcribe/local.cfg.example` 成
+`transcribe/local.cfg`，填三行：
+
+```ini
+LECTURE_HOME=D:\我的课程
+MODEL=small
+PYTHON=D:\projects\lecture-transcript\.venv\Scripts\python.exe
+```
+
+之后双击 `transcribe/转写.bat`（或给它建个桌面快捷方式）。
+
+**`.bat` 只在仓库里存在一份，不要复制它。** 机器相关的东西全在 `local.cfg` 里，
+而那个文件是 git-ignored 的。这样逻辑只有一处、配置只有一处，不会出现
+「改了一份忘了另一份」的漂移。同理，`local.cfg` 里的 `PYTHON=` 让你可以指向
+任何已有的解释器，不必为这个项目重建一个 2GB 的虚拟环境。
 
 不用 `.bat` 的话直接跑：
 

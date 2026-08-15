@@ -23,6 +23,10 @@
 # 仓库里只放 glossary.example.md。
 glossary.md
 
+# 机器相关的设置（数据目录在哪、用哪个档位）。逻辑在仓库里，配置在这里，
+# 两边不会打架。仓库里只放 local.cfg.example。
+local.cfg
+
 # === 体积 ===
 models/
 .venv/
