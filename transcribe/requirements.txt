@@ -1,0 +1,6 @@
+faster-whisper==1.2.1
+
+# 以下两个包用于开启 GPU 加速（MX250 等 NVIDIA 显卡），CPU 模式不需要。
+# 如果不装，脚本会自动检测失败并回退到 CPU，不影响使用。
+nvidia-cublas-cu12
+nvidia-cudnn-cu12

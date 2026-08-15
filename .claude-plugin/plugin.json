@@ -1,0 +1,17 @@
+{
+  "name": "lecture-transcript",
+  "version": "0.1.0",
+  "description": "把课程录屏变成可读的 markdown 口播稿。本地 faster-whisper 转写出 SRT，cleaner agent 只删语气词、加标点分段、按术语表修正 ASR 错字，并用字符级 diff 逐字校验不添一字。",
+  "author": {
+    "name": "lingjiee"
+  },
+  "license": "MIT",
+  "keywords": [
+    "transcription",
+    "whisper",
+    "subtitle",
+    "srt",
+    "chinese",
+    "lecture-notes"
+  ]
+}

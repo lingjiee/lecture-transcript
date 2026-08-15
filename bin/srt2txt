@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Extract plain text from SRT/VTT subtitles.
+
+Strips indices, timecodes, markup and rolling-caption duplication, then joins
+cue text back into readable prose (no space between CJK, space between latin).
+
+    srt2txt talk.srt              # -> stdout
+    srt2txt talk.srt -o talk.txt
+    srt2txt talk.srt --keep-lines # one cue per line, no joining
+    srt2txt talk.srt --gap 0      # single block, no paragraph splitting
+"""
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+TIMECODE = re.compile(
+    r"(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3})"
+)
+INDEX = re.compile(r"^\d+$")
+TAGS = re.compile(r"<[^>]*>|\{\\[^}]*\}")        # <i>, <font ...>, {\an8}
+BRACKETS = re.compile(r"\[[^\]]*\]|【[^】]*】")   # [music] [音乐]
+SPEAKER = re.compile(r"^\s*-\s+")
+
+# Han, kana and CJK-compatibility ideographs
+CJK = re.compile(
+    "[぀-ヿ㐀-䶿一-鿿豈-﫿ｦ-ﾟ]"
+)
+# fullwidth marks that must never be split from the text they hang off
+PUNCT_AFTER = "　、。，．；：？！）" \
+              "〕］｝〉》」』】…—" \
+              "～·’”"
+PUNCT_BEFORE = "（〔［｛〈《「『【‘“"
+
+ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "utf-16", "big5", "cp1252")
+
+
+def read_text(path):
+    raw = path.read_bytes()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16")
+    for enc in ENCODINGS:
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def to_seconds(stamp):
+    h, m, rest = stamp.split(":")
+    s, ms = re.split(r"[,.]", rest)
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms.ljust(3, "0")) / 1000
+
+
+def parse_cues(text):
+    """Yield (start, end, raw_lines) for every timecoded cue."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    cues, pending, start, end = [], [], None, None
+    for line in text.split("\n"):
+        stripped = line.strip()
+        m = TIMECODE.search(stripped)
+        if m:
+            if start is not None:
+                cues.append((start, end, pending))
+            start, end, pending = to_seconds(m.group(1)), to_seconds(m.group(2)), []
+            continue
+        if start is None:
+            continue                    # WEBVTT header, NOTE blocks, leading junk
+        if not stripped or INDEX.match(stripped):
+            continue
+        pending.append(stripped)
+    if start is not None:
+        cues.append((start, end, pending))
+    return cues
+
+
+def clean(lines):
+    out = []
+    for line in lines:
+        line = TAGS.sub("", line)
+        line = BRACKETS.sub("", line)
+        line = SPEAKER.sub("", line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            out.append(line)
+    return join(out)
+
+
+def glue(left, right):
+    """No space between CJK or around fullwidth punctuation; a space elsewhere."""
+    if not left or not right:
+        return ""
+    a, b = left[-1], right[0]
+    if a.isspace() or b.isspace():
+        return ""
+    if a in PUNCT_AFTER or b in PUNCT_BEFORE:
+        return ""
+    if CJK.match(a) and CJK.match(b):
+        return ""
+    return " "
+
+
+def join(parts):
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    buf = parts[0]
+    for part in parts[1:]:
+        buf += glue(buf, part) + part
+    return buf
+
+
+def dedupe(texts):
+    """Collapse rolling captions: cue N+1 often repeats cue N as its prefix."""
+    out = []
+    for cur in texts:
+        if not out:
+            out.append(cur)
+            continue
+        prev = out[-1]
+        if cur == prev or prev.endswith(cur):
+            continue
+        if cur.startswith(prev):
+            out[-1] = cur
+            continue
+        limit = min(len(prev), len(cur))
+        for n in range(limit, 3, -1):          # tail of prev == head of cur
+            if prev[-n:] == cur[:n]:
+                cur = cur[n:]
+                break
+        cur = cur.strip()
+        if cur:
+            out.append(cur)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Extract plain text from SRT/VTT subtitles.")
+    ap.add_argument("input", type=Path)
+    ap.add_argument("-o", "--output", type=Path, help="write here instead of stdout")
+    ap.add_argument("--keep-lines", action="store_true", help="one cue per line")
+    ap.add_argument("--gap", type=float, default=2.0,
+                    help="silence in seconds that starts a new paragraph (0 disables)")
+    args = ap.parse_args()
+
+    if not args.input.is_file():
+        sys.exit(f"srt2txt: no such file: {args.input}")
+
+    cues = parse_cues(read_text(args.input))
+    if not cues:
+        sys.exit(f"srt2txt: no timecoded cues found in {args.input}")
+
+    kept = [(s, e, body) for s, e, lines in cues if (body := clean(lines))]
+    if not kept:
+        sys.exit(f"srt2txt: cues found but all empty after cleaning: {args.input}")
+
+    if args.keep_lines:
+        result = "\n".join(dedupe([c[2] for c in kept]))
+    else:
+        paragraphs, buf, prev_end = [], [], None
+        for start, end, body in kept:
+            if args.gap and prev_end is not None and start - prev_end >= args.gap and buf:
+                paragraphs.append(buf)
+                buf = []
+            buf.append(body)
+            prev_end = end
+        if buf:
+            paragraphs.append(buf)
+        result = "\n\n".join(join(dedupe(p)) for p in paragraphs)
+
+    if args.output:
+        args.output.write_text(result + "\n", encoding="utf-8")
+        paras = result.count("\n\n") + 1
+        print(f"{args.output}  ({len(result)} chars, {paras} paragraphs)", file=sys.stderr)
+    else:
+        print(result)
+
+
+if __name__ == "__main__":
+    main()

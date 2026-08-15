@@ -1,0 +1,39 @@
+# === 绝对不能进仓库的：课程内容 ===
+# 录音、录屏、字幕、文字稿都是课程的版权材料，私有仓库也不放。
+# Git 一旦提交就进了历史，事后删除清不掉。
+*.mp4
+*.mkv
+*.mov
+*.m4v
+*.webm
+*.mp3
+*.m4a
+*.wav
+*.aac
+*.flac
+*.opus
+*.srt
+*.vtt
+待转写/
+已处理/
+输出/
+备份/
+
+# 你自己的真实术语表——里面是讲者的口误和私人项目名，属于私人语料。
+# 仓库里只放 glossary.example.md。
+glossary.md
+
+# === 体积 ===
+models/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.cache/
+
+# === 杂项 ===
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

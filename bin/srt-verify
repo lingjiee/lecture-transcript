@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Verify a cleaned transcript against the text it was extracted from.
+
+    srt-verify raw.txt clean.md          # body: no-rewrite check + summary: fact check
+    srt-verify raw.txt clean.md --whole  # treat the whole file as body
+
+The cleaned file is split at the first line that is exactly `---`:
+
+  BODY     — must only DELETE characters. Checked with a character diff; every
+             reported change is either a declared ASR correction or a bug.
+  SUMMARY  — is generated, so new wording is allowed. Only its hard facts are
+             checked: every number, latin token and 《title》 it mentions must
+             already appear in the body. Causality, degree and stance cannot be
+             machine-checked and are NOT covered here.
+
+Exit code is the total number of flagged items, so `&& echo OK` works.
+"""
+
+import difflib
+import re
+import sys
+from pathlib import Path
+
+NOISE = re.compile(r"[^\w一-鿿]")
+LIST_MARKER = re.compile(r"(?m)^\s{0,3}(?:\d+\.|[-*+])\s")
+TABLE_RULE = re.compile(r"(?m)^\s*\|[\s|:-]+\|\s*$")
+NUMBER = re.compile(r"\d+")
+LATIN = re.compile(r"[A-Za-z][A-Za-z'’.\-]*")
+TITLE = re.compile(r"《([^》]+)》")
+# structural words that belong to the summary template, not to the transcript
+TEMPLATE_WORDS = {"markdown", "md"}
+
+
+def norm(text):
+    return NOISE.sub("", text.lower())
+
+
+def split_body(text):
+    """Return (body, summary) — the summary starts at the first bare `---` line."""
+    lines = text.split("\n")
+    for n, line in enumerate(lines):
+        if line.strip() == "---":
+            return "\n".join(lines[:n]), "\n".join(lines[n:])
+    return text, ""
+
+
+def check_rewrite(source, body):
+    """Every insert/replace is the cleaned body saying what the source did not."""
+    a, b = norm(source), norm(body)
+    ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+    found = []
+    for tag, i1, i2, j1, j2 in ops:
+        if tag in ("insert", "replace"):
+            found.append((a[i1:i2] or "∅", b[j1:j2], b[max(0, j1 - 12):j1], b[j2:j2 + 12]))
+    return a, b, found
+
+
+def check_facts(body, summary):
+    """Numbers, latin tokens and 《titles》 in the summary must occur in the body."""
+    text = TABLE_RULE.sub("", LIST_MARKER.sub("", summary))
+    haystack_raw = body
+    haystack_low = body.lower()
+    missing = []
+
+    for num in dict.fromkeys(NUMBER.findall(text)):
+        if num not in haystack_raw:
+            missing.append(("数字", num))
+
+    for word in dict.fromkeys(LATIN.findall(text)):
+        bare = word.strip(".-'’")
+        if len(bare) < 2 or bare.lower() in TEMPLATE_WORDS:
+            continue
+        if bare.lower() not in haystack_low:
+            missing.append(("英文", bare))
+
+    for title in dict.fromkeys(TITLE.findall(text)):
+        if title not in haystack_raw and title.lower() not in haystack_low:
+            missing.append(("书名", f"《{title}》"))
+
+    return missing
+
+
+def main():
+    argv = sys.argv[1:]
+    paths = [a for a in argv if not a.startswith("--")]
+    whole = "--whole" in argv
+    if len(paths) != 2:
+        sys.exit(__doc__)
+    src, out = (Path(p) for p in paths)
+    for p in (src, out):
+        if not p.is_file():
+            sys.exit(f"srt-verify: no such file: {p}")
+
+    body, summary = split_body(out.read_text(encoding="utf-8"))
+    if whole:
+        body, summary = body + summary, ""
+
+    a, b, rewrites = check_rewrite(src.read_text(encoding="utf-8"), body)
+    print(f"正文 {len(a)} 字 -> 清洗后 {len(b)} 字 "
+          f"(净删 {len(a) - len(b)}, 保留 {len(b) / len(a):.0%})" if a else "正文为空")
+    print(f"[正文] 改动原文之处: {len(rewrites)}")
+    for was, now, pre, post in rewrites:
+        print(f"    …{pre}[ {was} -> {now} ]{post}…")
+
+    missing = []
+    if summary.strip():
+        missing = check_facts(body, summary)
+        print(f"\n[总结] {len(norm(summary))} 字，不参与正文校验")
+        print(f"[总结] 正文中查无出处的专名/数字: {len(missing)}")
+        for kind, item in missing:
+            print(f"    {kind}: {item}")
+        if not missing:
+            print("    （因果、程度、立场无法机器校验，仍需人工抽查）")
+
+    sys.exit(min(len(rewrites) + len(missing), 125))
+
+
+if __name__ == "__main__":
+    main()
