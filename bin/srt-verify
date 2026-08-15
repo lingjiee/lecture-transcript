@@ -30,6 +30,18 @@ TITLE = re.compile(r"《([^》]+)》")
 # structural words that belong to the summary template, not to the transcript
 TEMPLATE_WORDS = {"markdown", "md"}
 
+# Characters whose deletion silently flips meaning. None of them can ever be
+# part of a filler word, so any disappearance is a defect, not a judgement call.
+PROTECTED = set("不没无非未别莫勿甭" "0123456789" "一二两三四五六七八九十百千万亿")
+
+# ...except when the character is just a syllable of an ordinary word. 非常
+# means "very", not "not". Matched as a bigram against the source, on either
+# side of the deleted character.
+NOT_NEGATION = {
+    "非常", "无论", "无数", "无非", "无比", "未来", "别的", "特别", "区别",
+    "差别", "个别", "分别", "识别", "级别", "性别", "告别", "莫名", "没准",
+}
+
 
 def norm(text):
     return NOISE.sub("", text.lower())
@@ -48,11 +60,37 @@ def check_rewrite(source, body):
     """Every insert/replace is the cleaned body saying what the source did not."""
     a, b = norm(source), norm(body)
     ops = difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
-    found = []
+    found, dropped = [], []
     for tag, i1, i2, j1, j2 in ops:
         if tag in ("insert", "replace"):
             found.append((a[i1:i2] or "∅", b[j1:j2], b[max(0, j1 - 12):j1], b[j2:j2 + 12]))
-    return a, b, found
+        if tag == "delete":
+            # Only pure deletions. A `replace` already lands in the rewrite
+            # report above, where it must be declared as an ASR correction —
+            # scanning it here would flag every 一遍->以便 style fix twice.
+            dropped.append((i1, i2))
+    return a, b, found, dropped
+
+
+def check_protected(source, dropped):
+    """Deletion is always a subsequence, so the rewrite check can never see it.
+
+    That leaves one genuinely dangerous move wide open: dropping a negation
+    turns 「这不是推荐方案」into 「这是推荐方案」—— opposite meaning, zero
+    reported changes. Numbers behave the same way. Neither ever belongs to a
+    filler word, so their disappearance is always a bug worth stopping on.
+    """
+    hits = []
+    for i1, i2 in dropped:
+        for offset, char in enumerate(source[i1:i2], start=i1):
+            if char not in PROTECTED:
+                continue
+            if (source[offset:offset + 2] in NOT_NEGATION
+                    or source[offset - 1:offset + 1] in NOT_NEGATION):
+                continue
+            hits.append((char, source[max(0, offset - 12):offset],
+                         source[offset + 1:offset + 13]))
+    return hits
 
 
 def check_facts(body, summary):
@@ -95,12 +133,19 @@ def main():
     if whole:
         body, summary = body + summary, ""
 
-    a, b, rewrites = check_rewrite(src.read_text(encoding="utf-8"), body)
+    a, b, rewrites, dropped = check_rewrite(src.read_text(encoding="utf-8"), body)
     print(f"正文 {len(a)} 字 -> 清洗后 {len(b)} 字 "
           f"(净删 {len(a) - len(b)}, 保留 {len(b) / len(a):.0%})" if a else "正文为空")
     print(f"[正文] 改动原文之处: {len(rewrites)}")
     for was, now, pre, post in rewrites:
         print(f"    …{pre}[ {was} -> {now} ]{post}…")
+
+    protected = check_protected(a, dropped)
+    print(f"[正文] 被删掉的否定词/数字: {len(protected)}")
+    for char, pre, post in protected:
+        print(f"    …{pre}[ 删掉了 {char} ]{post}…")
+    if protected:
+        print("    删否定词会让句子意思反过来，删数字会改变事实。这一项必须归零。")
 
     missing = []
     if summary.strip():
@@ -112,7 +157,7 @@ def main():
         if not missing:
             print("    （因果、程度、立场无法机器校验，仍需人工抽查）")
 
-    sys.exit(min(len(rewrites) + len(missing), 125))
+    sys.exit(min(len(rewrites) + len(protected) + len(missing), 125))
 
 
 if __name__ == "__main__":

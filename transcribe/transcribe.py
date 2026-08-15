@@ -80,6 +80,29 @@ def srt_time(seconds: float) -> str:
     return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
 
 
+def find_loops(items: list[tuple[float, float, str]],
+               run: int = 3) -> list[tuple[float, float, str]]:
+    """Flag runs of consecutive segments with identical text.
+
+    Whisper's best-known failure mode is a decoding loop that repeats one
+    phrase for many segments. It matters more than any cleaning rule, because
+    the loop enters the SRT as "原文": cleaner will faithfully preserve it and
+    srt-verify will report zero changes. Nothing downstream can catch it — the
+    verification chain guarantees fidelity to the ASR, not to the audio.
+
+    This only finds looping repetition, not hallucination in general.
+    """
+    flagged, index = [], 0
+    while index < len(items):
+        end = index + 1
+        while end < len(items) and items[end][2] == items[index][2]:
+            end += 1
+        if end - index >= run:
+            flagged.append((items[index][0], items[end - 1][1], items[index][2]))
+        index = end
+    return flagged
+
+
 def collect_inputs(value: str | None, layout: Layout) -> list[Path]:
     """一个指定的文件，或者收件箱里排队的全部文件。"""
     if value:
@@ -200,6 +223,14 @@ def transcribe_one(model, source: Path, layout: Layout, language: str) -> Path |
     srt_path.write_text("\n".join(parts), encoding="utf-8-sig")
 
     print(f"用时 {(time.time() - started) / 60:.1f} 分钟 → {srt_path}")
+
+    loops = find_loops(collected)
+    if loops:
+        print(f"\n⚠ 疑似复读机幻觉 {len(loops)} 处——下游任何环节都发现不了，请去听：",
+              file=sys.stderr)
+        for start, end, text in loops[:10]:
+            print(f"    {srt_time(start)[:8]} - {srt_time(end)[:8]}  「{text[:30]}」",
+                  file=sys.stderr)
     return srt_path
 
 

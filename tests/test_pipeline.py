@@ -198,13 +198,55 @@ class TestSrtVerify(TempDirCase):
         self.assertNotEqual(strict.returncode, 0)
 
     def test_deletion_is_not_detectable(self):
-        """已知局限：过度删除永远是子序列，脚本判不出来。
+        """已知局限：过度删除永远是子序列，改写检查判不出来。
 
         这条测试锁住的是"我们知道它拦不住什么"，README 里也写明了。
         真正约束删除范围的是 cleaner 定义里的规则，不是这个脚本。
         """
         proc = self.verify(RAW, "我们", "--whole")
         self.assertEqual(proc.returncode, 0)
+
+    # --- 从"过度删除"里切出来的、后果最严重的一块 ---
+
+    def test_deleted_negation_is_caught(self):
+        """删掉一个「不」，意思就反了，而它仍然是严格子序列。"""
+        proc = self.verify("这不是推荐方案", "这是推荐方案", "--whole")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("删掉了 不", proc.stdout)
+
+    def test_deleted_number_is_caught(self):
+        proc = self.verify("我们有三个选项", "我们有个选项", "--whole")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("删掉了 三", proc.stdout)
+
+    def test_arabic_digit_deletion_is_caught(self):
+        proc = self.verify("跑了 60 分钟", "跑了 0 分钟", "--whole")
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_declared_correction_touching_a_number_is_not_flagged(self):
+        """`一遍 -> 以便` 这类已申报的纠错是 replace，不该被当成删数字。
+
+        改写检查已经报了它、也要求申报，这里再报一次就是重复噪音。
+        """
+        proc = self.verify("写进文件里一遍我随后查看", "写进文件里以便我随后查看", "--whole")
+        self.assertIn("被删掉的否定词/数字: 0", proc.stdout)
+
+    def test_filler_deletion_does_not_trip_the_guard(self):
+        """现行删除清单里的词一个都不含否定词或数字，所以不该误报。"""
+        proc = self.verify(RAW, "我们今天要讲的是这个非常重要的概念", "--whole")
+        self.assertIn("被删掉的否定词/数字: 0", proc.stdout)
+
+    def test_syllable_of_an_ordinary_word_is_not_a_negation(self):
+        """「非常」的非、「特别」的别、「未来」的未都不是否定，不该误报。"""
+        for src in ("这非常重要", "这特别重要", "说的是未来", "无论如何"):
+            with self.subTest(src=src):
+                proc = self.verify(src, "", "--whole")
+                self.assertIn("被删掉的否定词/数字: 0", proc.stdout)
+
+    def test_real_negation_still_caught_next_to_lookalikes(self):
+        """例外名单不能把真的否定也放过去。"""
+        proc = self.verify("非常不重要", "非常重要", "--whole")
+        self.assertIn("删掉了 不", proc.stdout)
 
 
 # ------------------------------------------------------------ transcribe
@@ -319,6 +361,37 @@ class TestArchive(TempDirCase):
         transcribe.archive(outside, self.layout)
         self.assertTrue(outside.exists())
         self.assertFalse(self.layout.done.exists())
+
+
+class TestFindLoops(unittest.TestCase):
+    """复读机幻觉是下游唯一发现不了的污染，所以检测它的逻辑要有测试。"""
+
+    @staticmethod
+    def seg(texts):
+        return [(float(i), i + 1.0, t) for i, t in enumerate(texts)]
+
+    def test_no_repetition_is_clean(self):
+        self.assertEqual(transcribe.find_loops(self.seg(["甲", "乙", "丙"])), [])
+
+    def test_two_in_a_row_is_below_threshold(self):
+        """讲者重复一句是强调，不是幻觉。默认要连着三段才算。"""
+        self.assertEqual(transcribe.find_loops(self.seg(["甲", "甲", "乙"])), [])
+
+    def test_three_in_a_row_is_flagged(self):
+        found = transcribe.find_loops(self.seg(["乙", "甲", "甲", "甲", "丙"]))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0][2], "甲")
+
+    def test_span_covers_the_whole_run(self):
+        found = transcribe.find_loops(self.seg(["甲", "甲", "甲", "甲"]))
+        self.assertEqual((found[0][0], found[0][1]), (0.0, 4.0))
+
+    def test_two_separate_loops(self):
+        found = transcribe.find_loops(self.seg(["甲"] * 3 + ["丙"] + ["乙"] * 3))
+        self.assertEqual([f[2] for f in found], ["甲", "乙"])
+
+    def test_empty_input(self):
+        self.assertEqual(transcribe.find_loops([]), [])
 
 
 class TestLayout(TempDirCase):
