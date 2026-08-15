@@ -363,6 +363,64 @@ class TestArchive(TempDirCase):
         self.assertFalse(self.layout.done.exists())
 
 
+class TestFactsOnly(TempDirCase):
+    """导读是生成物，允许新措辞，但硬事实必须在正文里有出处。"""
+
+    BODY = "我们讲了《思考的真相》这本书，Git 有 3 个核心概念，作者是李笑来。"
+
+    def facts(self, digest: str) -> subprocess.CompletedProcess:
+        a = self.write("body.md", self.BODY)
+        b = self.write("digest.md", digest)
+        return run(SRT_VERIFY, str(a), str(b), "--facts-only")
+
+    def test_new_wording_is_allowed(self):
+        """概括性词语原文没出现过也没关系——这正是导读和逐字稿的区别。"""
+        proc = self.facts("**主旨**：讲版本控制的认知模型，从一本书讲起。")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("查无出处的专名/数字: 0", proc.stdout)
+
+    def test_invented_book_title_is_caught(self):
+        proc = self.facts("提到了《原则》这本书。")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("《原则》", proc.stdout)
+
+    def test_invented_number_is_caught(self):
+        proc = self.facts("Git 有 7 个核心概念。")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("7", proc.stdout)
+
+    def test_invented_latin_token_is_caught(self):
+        proc = self.facts("讲了 Git 和 Mercurial。")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Mercurial", proc.stdout)
+
+    def test_facts_present_in_body_pass(self):
+        proc = self.facts("《思考的真相》，Git，3 个概念，李笑来。")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
+    def test_exit_code_counts_missing_facts(self):
+        proc = self.facts("《原则》和 Mercurial。")
+        self.assertEqual(proc.returncode, 2)
+
+    def test_timestamps_are_not_treated_as_facts(self):
+        """`00:30` 是回跳音频的导航元数据，不是正文要支持的主张。
+
+        不排除的话，一份带 13 个时间戳的导读会报出 20 处"查无出处的数字"，
+        全是误报，真正的问题会被淹掉。
+        """
+        proc = self.facts("- `00:30` 讲了一本书\n- `12:05` 又讲了别的")
+        self.assertIn("查无出处的专名/数字: 0", proc.stdout)
+
+    def test_a_real_number_next_to_timestamps_is_still_caught(self):
+        proc = self.facts("- `00:30` 一共有 99 个概念")
+        self.assertIn("99", proc.stdout)
+
+    def test_facts_only_skips_the_rewrite_check(self):
+        """导读整篇都是新写的，不该被当成改写原文。"""
+        proc = self.facts("完全不同的措辞，一个原文的句子都没有照抄。")
+        self.assertNotIn("改动原文之处", proc.stdout)
+
+
 class TestFindLoops(unittest.TestCase):
     """复读机幻觉是下游唯一发现不了的污染，所以检测它的逻辑要有测试。"""
 

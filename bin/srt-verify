@@ -3,6 +3,7 @@
 
     srt-verify raw.txt clean.md          # body: no-rewrite check + summary: fact check
     srt-verify raw.txt clean.md --whole  # treat the whole file as body
+    srt-verify clean.md digest.md --facts-only   # two files: fact-check the second
 
 The cleaned file is split at the first line that is exactly `---`:
 
@@ -24,6 +25,9 @@ from pathlib import Path
 NOISE = re.compile(r"[^\w一-鿿]")
 LIST_MARKER = re.compile(r"(?m)^\s{0,3}(?:\d+\.|[-*+])\s")
 TABLE_RULE = re.compile(r"(?m)^\s*\|[\s|:-]+\|\s*$")
+# `00:30` in a digest points back into the audio. It is navigation metadata,
+# not a claim the transcript has to support.
+TIMESTAMP = re.compile(r"`?\b\d{1,2}:\d{2}(?::\d{2})?\b`?")
 NUMBER = re.compile(r"\d+")
 LATIN = re.compile(r"[A-Za-z][A-Za-z'’.\-]*")
 TITLE = re.compile(r"《([^》]+)》")
@@ -95,7 +99,7 @@ def check_protected(source, dropped):
 
 def check_facts(body, summary):
     """Numbers, latin tokens and 《titles》 in the summary must occur in the body."""
-    text = TABLE_RULE.sub("", LIST_MARKER.sub("", summary))
+    text = TIMESTAMP.sub("", TABLE_RULE.sub("", LIST_MARKER.sub("", summary)))
     haystack_raw = body
     haystack_low = body.lower()
     missing = []
@@ -118,6 +122,24 @@ def check_facts(body, summary):
     return missing
 
 
+def facts_only(src, out):
+    """Two separate files: a transcript, and something generated from it.
+
+    The generated file is allowed new wording — it is a digest, not a subset —
+    so the no-rewrite check does not apply. Only its hard facts are checked.
+    """
+    body = src.read_text(encoding="utf-8")
+    digest = out.read_text(encoding="utf-8")
+    missing = check_facts(body, digest)
+    print(f"正文 {len(norm(body))} 字，导读 {len(norm(digest))} 字")
+    print(f"[导读] 正文中查无出处的专名/数字: {len(missing)}")
+    for kind, item in missing:
+        print(f"    {kind}: {item}")
+    if not missing:
+        print("    （因果、程度、立场无法机器校验，仍需人工抽查）")
+    sys.exit(min(len(missing), 125))
+
+
 def main():
     argv = sys.argv[1:]
     paths = [a for a in argv if not a.startswith("--")]
@@ -128,6 +150,9 @@ def main():
     for p in (src, out):
         if not p.is_file():
             sys.exit(f"srt-verify: no such file: {p}")
+
+    if "--facts-only" in argv:
+        facts_only(src, out)
 
     body, summary = split_body(out.read_text(encoding="utf-8"))
     if whole:
