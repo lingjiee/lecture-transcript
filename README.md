@@ -25,14 +25,14 @@
 ## 流程
 
 ```
-手机录屏  →  传到电脑  →  转写.bat  →  cleaner  →  你核对
+手机录屏  →  传到电脑  →  transcribe.bat  →  cleaner  →  你核对
                           ↓            ↓          ↓
                         .srt         .md      两张表
 ```
 
 1. **录**：手机录屏（录音机通常拿不到 App 内部音频）。分辨率和码率调到最低，画面用不上。
 2. **传**：局域网直传（LocalSend / KDE Connect 一类）到数据目录的 `待转写/`。
-3. **转写**：双击 `转写.bat`。收件箱里有几个跑几个，跑完源文件自动移进 `已处理/`。
+3. **转写**：双击 `transcribe.bat`。收件箱里有几个跑几个，跑完源文件自动移进 `已处理/`。
 4. **清洗**：在 Claude Code 里说「用 cleaner 清洗 <某个>.srt」。
 5. **核对**：cleaner 会返回两张表——改过的 ASR 错字、以及可疑但没敢动的地方（带时间戳）。
    拿时间戳回 `.srt` 搜那个词，跳到音频那一秒听三秒。不用通篇重听。
@@ -79,7 +79,7 @@ MODEL=small
 PYTHON=D:\projects\lecture-transcript\.venv\Scripts\python.exe
 ```
 
-之后双击 `transcribe/转写.bat`（或给它建个桌面快捷方式）。
+之后双击 `transcribe/transcribe.bat`（或给它建个桌面快捷方式）。
 
 **`.bat` 只在仓库里存在一份，不要复制它。** 机器相关的东西全在 `local.cfg` 里，
 而那个文件是 git-ignored 的。这样逻辑只有一处、配置只有一处，不会出现
@@ -123,7 +123,7 @@ agents/cleaner.md            清洗 agent 的完整定义（约束都写在这�
 bin/srt2txt                  字幕 → 纯文本，剥时间轴/标签/音效/滚动重复
 bin/srt-verify               字符级 diff，校验"只删不写"
 transcribe/transcribe.py     批量转写
-transcribe/转写.bat           Windows 启动器模板
+transcribe/transcribe.bat    Windows 启动器（配置读 local.cfg）
 glossary.example.md          术语表示例
 ```
 
